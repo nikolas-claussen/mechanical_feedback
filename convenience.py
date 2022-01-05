@@ -77,6 +77,10 @@ def disarrange(a, axis=-1):
 def midpoint(x): return np.vstack([x[:1], (x[1:] + x[:-1])/2, x[-1:]])
 
 
+def get_vorticity(x, scale):
+    return np.gradient(x[:,:,1], scale, axis=1) - np.gradient(x[:,:,0], scale, axis=0)
+
+
 def hessian(x):
     """
     Calculate the hessian matrix with finite differences.
@@ -206,6 +210,13 @@ def get_cytosolic_intensity(selection, size=8):
     filled = morphology.reconstruction(seed, selection-wht, method='erosion')
     
     return np.median(filled)
+
+
+def extended_max(im, h):
+    """Get extended maxima, regional maxima of height >= h."""
+    im_rec = reconstruction((im - h)*(im >= h), im, method='dilation')
+    return local_maxima(im_rec)
+
 
 def resize_tensor(m, shape):
     """Resize tensor of shape (n_y, n_x, 2, 2)."""
@@ -357,6 +368,22 @@ def blender_format(load_path, save_path, fact=4):
 
 
 ### Geometry
+
+
+def symmetrize(field):
+    """
+    Make vector or tensor field symmetric w.r.t. mirror across y-axis.
+    """
+    mirror_matrix = np.array([[1,0],[0,-1]])
+    mirror = field[::-1]
+    if len(field.shape) == 3: # vector
+        mirror = np.einsum('ij,xyi->xyi', mirror_matrix, mirror)
+    if len(field.shape) == 4: # tensor
+        mirror = np.einsum('ij,xyjk,kl->xyil', mirror_matrix, mirror, mirror_matrix)
+    return (field+mirror)/2
+
+
+def get_rot_mat(theta): return np.stack([[np.cos(theta), np.sin(theta)], [-np.sin(theta), np.cos(theta)]])
 
 
 def is_in_triangle(p, p0, p1, p2):
