@@ -19,6 +19,193 @@ import matplotlib.path as mpath
 import matplotlib.patches as mpatches
 
 from skimage import transform
+from PIL import Image
+
+
+### Array and list manipulation
+
+
+def flatten(lst, max_depth=1000, iter_count=0):
+    """
+    Flatten a list of lists into a list.
+
+    Also works with inhomogeneous lists, e.g., [[0,1],2]. The argument
+    depth determines how "deep" to flatten the list, e.g. with max_depth=1:
+    [[(1,0), (1,0)]] -> [(1,0), (1,0)].
+
+    Parameters
+    ----------
+    lst : list
+        list-of-lists.
+    max_depth : int, optional
+        To what depth to flatten the list.
+    iter_count : int, optional
+        Helper argumenr for recursion depth determination.
+    Returns
+    -------
+    iterator
+        flattened list.
+
+    """
+    for el in lst:
+        if (isinstance(el, Iterable) and not isinstance(el, (str, bytes))
+                and iter_count < max_depth):
+            yield from flatten(el, max_depth=max_depth,
+                               iter_count=iter_count+1)
+        else:
+            yield el
+
+def disarrange(a, axis=-1):
+    """
+    Shuffle `a` in-place along the given axis.
+
+    Apply numpy.random.shuffle to the given axis of `a`.
+    Each one-dimensional slice is shuffled independently.
+    """
+    b = a.swapaxes(axis, -1)
+    # Shuffle `b` in-place along the last axis.  `b` is a view of `a`,
+    # so `a` is shuffled in place, too.
+    shp = b.shape[:-1]
+    for ndx in np.ndindex(shp):
+        np.random.shuffle(b[ndx])
+    return
+
+
+### Finite differences
+
+
+def midpoint(x): return np.vstack([x[:1], (x[1:] + x[:-1])/2, x[-1:]])
+
+
+def hessian(x):
+    """
+    Calculate the hessian matrix with finite differences.
+
+    Parameters
+    ----------
+    x : ndarray
+
+    Returns
+    -------
+       an array of shape (x.dim, x.ndim) + x.shape
+       where the array[i, j, ...] corresponds to the second derivative x_ij
+    """
+    x_grad = np.gradient(x)
+    hessian = np.empty((x.ndim, x.ndim) + x.shape, dtype=x.dtype)
+    for k, grad_k in enumerate(x_grad):
+        # iterate over dimensions
+        # apply gradient again to every component of the first derivative.
+        tmp_grad = np.gradient(grad_k)
+        for j, grad_kj in enumerate(tmp_grad):
+            hessian[k, j, :, :] = grad_kj
+    return hessian.transpose((2, 3, 0, 1))
+
+
+### Smoothing & Interpolation
+
+
+def smooth(x, window_len=11, window='hanning', axis=-1):
+    """
+    Smooth the data using a window with requested size.
+
+    This method is based on the convolution of a scaled window with the signal.
+    The signal is prepared by introducing reflected copies of the signal
+    (with the window size) in both ends so that transient parts are minimized
+    in the begining and end part of the output signal.
+
+    Parameters
+    ----------
+    x : ndarray
+        the input signal
+    axis : int
+        which axis to smooth along
+    window_len: int
+        the dimension of the smoothing window; should be an odd integer
+    window : str
+        the type of window from 'flat', 'hanning', 'hamming', 'bartlett',
+        'blackman'. flat window will produce a moving average smoothing.
+
+    Returns
+    -------
+        y : ndarry
+            the smoothed signal
+
+    example:
+
+    t=linspace(-2,2,0.1)
+    x=sin(t)+randn(len(t))*0.1
+    y=smooth(x)
+
+    See Also
+    --------
+    np.hanning, np.hamming, np.bartlett, np.blackman, np.convolve
+    scipy.signal.lfilter
+
+    """
+    if x.size < window_len:
+        raise ValueError("Input vector needs to be bigger than window size.")
+    if window_len < 3:
+        return x
+    if window not in ['flat', 'hanning', 'hamming', 'bartlett', 'blackman']:
+        raise ValueError("Window not recognized")
+    if window == 'flat':
+        w = np.ones(window_len, 'd')
+    else:
+        w = eval('np.'+window+'(window_len)')
+    y = convolve1d(x, w/w.sum(), mode='nearest', axis=axis)
+    return y
+
+def interpolate_function_list(function_list, times=None):
+    """
+    1d interpolation between a list of _functions_, not function values.
+
+    Function does simple linear equidistant interpolation in 1d (in "time").
+    However, instead of interpolating between a list of function _values_,
+    it interpolates between a list of _functions_ (e.g. functions of
+    spatial coordinate x). Use case is: time interpolation between different
+    spatial interpolator instances.
+
+    Parameters
+    ----------
+    function_list : ndarray of dtype object
+        List of functions to be interpolated, with equal return type,
+        passed as  1d np.array.
+    times : np.array of dtype float, optional
+        Time points corresponding to function_list entries, defaults to
+        np.arange(len(function_list)). Must be sorted ascendingly.
+
+    Returns
+    -------
+    function, call signature (t,x)
+        Time-interpolated function.
+
+    """
+    if times is None:
+        times = np.arange(len(function_list))
+    max_i = len(times)-1
+
+    def f(t, x):
+        # search for matching entries in time array
+        i = np.searchsorted(times, t, side='right')
+        i = i if i < max_i else max_i  # to avoid errors at domain edge
+        delta = times[i] - times[i-1]
+        a = (times[i]-t)/delta   # calculate interp weights
+        b = (t - times[i-1])/delta
+        return a*function_list[i-1](x) + b*function_list[i](x)
+    return f
+
+
+### Image & Tensor Field Processing
+
+
+def get_cytosolic_intensity(selection, size=8):
+    """Get cytosolic background intensity for image of membrane bound marker"""
+    wht = morphology.white_tophat(selection, selem=morphology.disk(size))
+    seed = np.copy(selection-wht)
+    seed[1:-1, 1:-1] = (selection-wht).max()
+    filled = morphology.reconstruction(seed, selection-wht, method='erosion')
+    
+    return np.median(filled)
 
 def resize_tensor(m, shape):
     """Resize tensor of shape (n_y, n_x, 2, 2)."""
@@ -29,8 +216,6 @@ def resize_tensor(m, shape):
     m_new[:, :, 1, 0] = transform.resize(m[:, :, 1, 0], shape, **kwarg)
     m_new[:, :, 1, 1] = transform.resize(m[:, :, 1, 1], shape, **kwarg)
     return m_new
-
-
 
 def filter_field(field, image_filter, kwargs={}):
     """Apply a 2d image filter to all components of a vector or matrix field of shape (n_y, n_x, ...)"""
@@ -52,6 +237,56 @@ def filter_field(field, image_filter, kwargs={}):
                            for j in d2], axis=-1)
     return output
 
+def functional_calc(a, f, is_vectorized=True):
+    """
+    Apply a function f to field of hermitian matrices by applying it to eigenvalues.
+
+    Parameters
+    ----------
+    a : np.array of shape (..., M, M)
+        (Array of) hermitian matrices.
+    f : callable
+        Real or complex valued function of a single real variable.
+    is_vectorized : bool, optional
+        Whether f can be applied directly to arrays, e.g. np.sin
+        or lambda x: x**2.
+
+    Returns
+    -------
+    f_a : np.array of same shape as a
+        f(a).
+
+    """
+    w, v = np.linalg.eigh(a)
+    w = f(w) if is_vectorized else np.vectorize(f)(w)
+    w = np.einsum('...i,ij->...ij', w, np.eye(a.shape[-1]))
+    return np.einsum('...ij,...jk,...lk->...il', v, w, v)
+
+
+### Plotting
+
+
+def axisEqual3D(ax):
+    """
+    Set the aspect ratio of a matplotlib 3 plot to 'equal'.
+
+    Parameters
+    ----------
+    ax : matplotlib Axes3D axis object
+
+    Returns
+    -------
+    None.
+
+    """
+    extents = np.array([getattr(ax, 'get_{}lim'.format(dim))() for dim in
+                        'xyz'])
+    sz = extents[:, 1] - extents[:, 0]
+    centers = np.mean(extents, axis=1)
+    maxsize = max(abs(sz))
+    r = maxsize/2
+    for ctr, dim in zip(centers, 'xyz'):
+        getattr(ax, 'set_{}lim'.format(dim))(ctr - r, ctr + r)
 
 def curly_arrow(ax, start, end, arr_size=1, n=5, linew=1., width=0.1,
                 color='gray',):
@@ -110,6 +345,19 @@ def curly_arrow(ax, start, end, arr_size=1, n=5, linew=1., width=0.1,
     patch.set_transform(mpl.transforms.Affine2D().rotate_around(xmax, ymax, ang) + ax.transData)
     return patch
 
+def blender_format(load_path, save_path, fact=4):
+    """Format image so that it is compatible with my blender model of the Drosophila egg"""
+    img = Image.open(load_path)
+    img = img.resize((fact*217, fact*256),Image.ANTIALIAS)
+    img = np.array(img)
+    square = np.zeros((fact*256, fact*256, 4), dtype=np.uint8)
+    square[:,:fact*217,:] = img
+    square = Image.fromarray(square)
+    square.save(save_path)
+
+
+### Geometry
+
 
 def is_in_triangle(p, p0, p1, p2):
     """
@@ -121,221 +369,6 @@ def is_in_triangle(p, p0, p1, p2):
     s = 1/(2*Area)*(p0[1]*p2[0] - p0[0]*p2[1] + (p2[1] - p0[1])*p[0] + (p0[0] - p2[0])*p[1])
     t = 1/(2*Area)*(p0[0]*p1[1] - p0[1]*p1[0] + (p0[1] - p1[1])*p[0] + (p1[0] - p0[0])*p[1])
     return (s < 1) & (t < 1) & ((1-s-t) < 1)
-
-
-def functional_calc(a, f, is_vectorized=True):
-    """
-    Apply a function f to hermitian matrix by applying it to eigenvalues.
-
-    Parameters
-    ----------
-    a : np.array of shape (..., M, M)
-        (Array of) hermitian matrices.
-    f : callable
-        Real or complex valued function of a single real variable.
-    is_vectorized : bool, optional
-        Whether f can be applied directly to arrays, e.g. np.sin
-        or lambda x: x**2.
-
-    Returns
-    -------
-    f_a : np.array of same shape as a
-        f(a).
-
-    """
-    w, v = np.linalg.eigh(a)
-    w = f(w) if is_vectorized else np.vectorize(f)(w)
-    w = np.einsum('...i,ij->...ij', w, np.eye(a.shape[-1]))
-    return np.einsum('...ij,...jk,...lk->...il', v, w, v)
-
-
-def smooth(x, window_len=11, window='hanning', axis=-1):
-    """
-    Smooth the data using a window with requested size.
-
-    This method is based on the convolution of a scaled window with the signal.
-    The signal is prepared by introducing reflected copies of the signal
-    (with the window size) in both ends so that transient parts are minimized
-    in the begining and end part of the output signal.
-
-    Parameters
-    ----------
-    x : ndarray
-        the input signal
-    axis : int
-        which axis to smooth along
-    window_len: int
-        the dimension of the smoothing window; should be an odd integer
-    window : str
-        the type of window from 'flat', 'hanning', 'hamming', 'bartlett',
-        'blackman'. flat window will produce a moving average smoothing.
-
-    Returns
-    -------
-        y : ndarry
-            the smoothed signal
-
-    example:
-
-    t=linspace(-2,2,0.1)
-    x=sin(t)+randn(len(t))*0.1
-    y=smooth(x)
-
-    See Also
-    --------
-    np.hanning, np.hamming, np.bartlett, np.blackman, np.convolve
-    scipy.signal.lfilter
-
-    """
-    if x.size < window_len:
-        raise ValueError("Input vector needs to be bigger than window size.")
-    if window_len < 3:
-        return x
-    if window not in ['flat', 'hanning', 'hamming', 'bartlett', 'blackman']:
-        raise ValueError("Window not recognized")
-    if window == 'flat':
-        w = np.ones(window_len, 'd')
-    else:
-        w = eval('np.'+window+'(window_len)')
-    y = convolve1d(x, w/w.sum(), mode='nearest', axis=axis)
-    return y
-
-
-def axisEqual3D(ax):
-    """
-    Set the aspect ratio of a matplotlib 3 plot to 'equal'.
-
-    Parameters
-    ----------
-    ax : matplotlib Axes3D axis object
-
-    Returns
-    -------
-    None.
-
-    """
-    extents = np.array([getattr(ax, 'get_{}lim'.format(dim))() for dim in
-                        'xyz'])
-    sz = extents[:, 1] - extents[:, 0]
-    centers = np.mean(extents, axis=1)
-    maxsize = max(abs(sz))
-    r = maxsize/2
-    for ctr, dim in zip(centers, 'xyz'):
-        getattr(ax, 'set_{}lim'.format(dim))(ctr - r, ctr + r)
-
-
-def interpolate_function_list(function_list, times=None):
-    """
-    1d interpolation between a list of _functions_, not function values.
-
-    Function does simple linear equidistant interpolation in 1d (in "time").
-    However, instead of interpolating between a list of function _values_,
-    it interpolates between a list of _functions_ (e.g. functions of
-    spatial coordinate x). Use case is: time interpolation between different
-    spatial interpolator instances.
-
-    Parameters
-    ----------
-    function_list : ndarray of dtype object
-        List of functions to be interpolated, with equal return type,
-        passed as  1d np.array.
-    times : np.array of dtype float, optional
-        Time points corresponding to function_list entries, defaults to
-        np.arange(len(function_list)). Must be sorted ascendingly.
-
-    Returns
-    -------
-    function, call signature (t,x)
-        Time-interpolated function.
-
-    """
-    if times is None:
-        times = np.arange(len(function_list))
-    max_i = len(times)-1
-
-    def f(t, x):
-        # search for matching entries in time array
-        i = np.searchsorted(times, t, side='right')
-        i = i if i < max_i else max_i  # to avoid errors at domain edge
-        delta = times[i] - times[i-1]
-        a = (times[i]-t)/delta   # calculate interp weights
-        b = (t - times[i-1])/delta
-        return a*function_list[i-1](x) + b*function_list[i](x)
-    return f
-
-
-def flatten(lst, max_depth=1000, iter_count=0):
-    """
-    Flatten a list of lists into a list.
-
-    Also works with inhomogeneous lists, e.g., [[0,1],2]. The argument
-    depth determines how "deep" to flatten the list, e.g. with max_depth=1:
-    [[(1,0), (1,0)]] -> [(1,0), (1,0)].
-
-    Parameters
-    ----------
-    lst : list
-        list-of-lists.
-    max_depth : int, optional
-        To what depth to flatten the list.
-    iter_count : int, optional
-        Helper argumenr for recursion depth determination.
-    Returns
-    -------
-    iterator
-        flattened list.
-
-    """
-    for el in lst:
-        if (isinstance(el, Iterable) and not isinstance(el, (str, bytes))
-                and iter_count < max_depth):
-            yield from flatten(el, max_depth=max_depth,
-                               iter_count=iter_count+1)
-        else:
-            yield el
-
-
-def disarrange(a, axis=-1):
-    """
-    Shuffle `a` in-place along the given axis.
-
-    Apply numpy.random.shuffle to the given axis of `a`.
-    Each one-dimensional slice is shuffled independently.
-    """
-    b = a.swapaxes(axis, -1)
-    # Shuffle `b` in-place along the last axis.  `b` is a view of `a`,
-    # so `a` is shuffled in place, too.
-    shp = b.shape[:-1]
-    for ndx in np.ndindex(shp):
-        np.random.shuffle(b[ndx])
-    return
-
-
-def midpoint(x): return np.vstack([x[:1], (x[1:] + x[:-1])/2, x[-1:]])
-
-
-def hessian(x):
-    """
-    Calculate the hessian matrix with finite differences.
-
-    Parameters
-    ----------
-    x : ndarray
-
-    Returns
-    -------
-       an array of shape (x.dim, x.ndim) + x.shape
-       where the array[i, j, ...] corresponds to the second derivative x_ij
-    """
-    x_grad = np.gradient(x)
-    hessian = np.empty((x.ndim, x.ndim) + x.shape, dtype=x.dtype)
-    for k, grad_k in enumerate(x_grad):
-        # iterate over dimensions
-        # apply gradient again to every component of the first derivative.
-        tmp_grad = np.gradient(grad_k)
-        for j, grad_kj in enumerate(tmp_grad):
-            hessian[k, j, :, :] = grad_kj
-    return hessian.transpose((2, 3, 0, 1))
 
 
 def create_regular_grid_mesh(n_x, n_y, glue=None, return_vertices=True):
