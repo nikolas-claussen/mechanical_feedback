@@ -1,6 +1,7 @@
 # mechanical_feedback
 Code for the investiagtion of mechanical feedback in the Drosophila embryo, written in python. So far, there are three modules which can 
-- compute Lie derivatives  
+- detect line segments in an image using the radon transform, and use this to compute anisotropy tensors 
 - transport tensor fields along path lines of a vector field
-- compute anisotropy tensors using the radon transform method
+- compute Lie derivatives
+
 For each module, there is also a series of tests to confirm their correct functioning.
