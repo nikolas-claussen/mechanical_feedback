@@ -304,3 +304,106 @@ def pull_back(phi, t_eval, field, x, y, t_field=None, fold_pbc=None,
                                       endpoint_vals)
 
     return endpoint_vals
+
+
+def advect_points(u, x, y, t, t_span, t_eval=None,
+                  initial_conds=None,
+                  interp_kwargs=None, solver_kwargs=None):
+    """
+    Advect points (initial conditions) by flow field.
+
+    A simplified version of rect_flow. Can't deal with periodic
+    bc's. Seeds streamlines at arbitrary initial conditions
+    instead of grid, thus not suitable to pulling back
+    fields. To be used to advect points.
+    
+    Parameters
+    ----------
+    u : ndarray of shape (n_timepoints, n_rows, n_cols, 2)
+        Vector field values at grid points. u[:,:,:,0] is the x-component,
+        u[:,:,:,1] the y-component. If u is a 3d array (len(u.shape) == 3),
+        the vector field is assumed to be constant in time.
+    x : ndarray of shape (n_cols,)
+        Array of x-coordinate values. x[i] == x-coord for u[:,:,i].
+        Coordinates must be strictly ascending.
+    y : ndarray (n_rows,)
+        Array of y-coordinate values. y[i] == y-coord for u[:,i,:].
+        Coordinates must be strictly ascending.
+    t : ndarry of shape (n_timepoints,)
+        Array of times at which vector field is sampled, in strictly
+        ascending order.  If the vector field is time independent
+        (len(u.shape) == 3), this argument is ignored (just pass None).
+    t_span : 2-tuple of floats
+        Interval of integration (t0, tf).
+    t_eval : np.array, otional.
+        Times at which to evaluate the flow. Defaults to
+        np.arange(t_span[0], t_span[1]+1), so phi[0] == initial conditions.
+    initial_conds : ndarrray of dimension (N, 2)
+        Array of initial conditions
+    interp_kwargs  : dict, optional
+        Parameters for the scipy.interpolate.RectBivariateSpline interpolator,
+        see scipy docs. In particular, one can choose the order
+        (linear, cubic, ...) and the smoothing paramter.
+    solver_kwargs : dict, optional
+        Parameters for the scipy ODE solver solve_ivp, see scipy docs.
+        The default is {'method'='LSODA', 'rtol'=1e-05}.
+
+    Returns
+    -------
+    phi : ndarray of shape (#timepoints, n_rows, n_cols, 2)
+        Flow of vector field. phi[:,i,j,:] is the trajectory of
+        point y[i], y[j], with phi[:,i,j,0] being the x-coordinate
+        and phi[:,i,j,1] the y-coordinate. If dense_output is True, return
+        array (n_rows, n_cols, 2) of OdeSolution objects.
+
+    """
+    ## preliminary argument parsing
+    # ensure correct dtype - if coords are ints, errors can occur
+    x = x.astype(float, copy=False)
+    y = y.astype(float, copy=False)
+    initial_conds = initial_conds.astype(float, copy=False)
+    if t_eval is None:
+        t_eval = np.arange(t_span[0], t_span[1]+1)
+    if interp_kwargs is None:
+        interp_kwargs = {}
+    if solver_kwargs is None:
+        solver_kwargs = {'method': 'RK45', 'rtol': 1e-05}
+    solver_kwargs['t_eval'] = t_eval
+    solver_kwargs['vectorized'] = True
+
+    ## set up interpolator
+    if len(u.shape) == 3:  # time-independent vector field
+        interp_x = RectBivariateSpline(y, x, u[:, :, 0], **interp_kwargs)
+        interp_y = RectBivariateSpline(y, x, u[:, :, 1], **interp_kwargs)
+
+        def rhs(tpt, pts):
+            return np.stack([interp_y(pts[0], pts[1]),
+                             interp_x(pts[0], pts[1])])
+    elif len(u.shape) == 4:
+        # RectBivariateSpline can only deal with 2d interpolation.
+        # Use a different interpolator for each time point,
+        # then interpolate linearly in time between those functions.
+        interp_x = [RectBivariateSpline(y, x, vf[:, :, 0], **interp_kwargs)
+                    for vf in u]
+        interp_y = [RectBivariateSpline(y, x, vf[:, :, 1], **interp_kwargs)
+                    for vf in u]
+        max_i = len(t)-1
+
+        def rhs(tpt, pts):
+            i = np.searchsorted(t, tpt, side='right')
+            i = i if i < max_i else max_i
+            delta = t[i] - t[i-1]
+            val_a = np.stack([interp_y[i-1](pts[0], pts[1]),
+                              interp_x[i-1](pts[0], pts[1])])
+            val_b = np.stack([interp_y[i](pts[0], pts[1]),
+                              interp_x[i](pts[0], pts[1])])
+            return ((t[i]-tpt)*val_a + (tpt - t[i-1])*val_b)/delta
+
+    ## iterate over initial conditions.
+    phi = []
+    for x_0 in initial_conds:
+        out = solve_ivp(rhs, t_span, x_0, **solver_kwargs)
+        assert out['status'] != -1, "integration failed"
+        phi.append(out['y'])
+        
+    return np.stack(phi).transpose(2,0,1)
