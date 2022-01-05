@@ -20,8 +20,6 @@ import matplotlib.patches as mpatches
 
 from skimage import transform
 
-from PIL import Image
-
 def resize_tensor(m, shape):
     """Resize tensor of shape (n_y, n_x, 2, 2)."""
     m_new = np.zeros(shape+(2, 2))
@@ -53,7 +51,6 @@ def filter_field(field, image_filter, kwargs={}):
         output = np.stack([np.stack([image_filter(field[...,i, j], **kwargs) for i in d1], axis=-1)
                            for j in d2], axis=-1)
     return output
-
 
 
 def curly_arrow(ax, start, end, arr_size=1, n=5, linew=1., width=0.1,
@@ -314,6 +311,9 @@ def disarrange(a, axis=-1):
     return
 
 
+def midpoint(x): return np.vstack([x[:1], (x[1:] + x[:-1])/2, x[-1:]])
+
+
 def hessian(x):
     """
     Calculate the hessian matrix with finite differences.
@@ -417,16 +417,3 @@ def create_regular_grid_mesh(n_x, n_y, glue=None, return_vertices=True):
         return vertices, faces
     else:
         return faces
-
-
-def midpoint(x): return np.vstack([x[:1], (x[1:] + x[:-1])/2, x[-1:]])
-
-def blender_format(load_path, save_path, fact=4):
-    """Format image so that it is compatible with blender"""
-    img = Image.open(load_path)
-    img = img.resize((fact*217, fact*256),Image.ANTIALIAS)
-    img = np.array(img)
-    square = np.zeros((fact*256, fact*256, 4), dtype=np.uint8)
-    square[:,:fact*217,:] = img
-    square = Image.fromarray(square)
-    square.save(save_path)
