@@ -130,7 +130,7 @@ def merge_lines(lines, distance_threshold=5):
 def plot_line_segments_over_image(image, lines, figsize, segment_length=7,
                                   segment_kwargs={}, imshow_kwargs={}):
     if len(segment_kwargs) == 0:
-        segment_kwargs = {s=20, color='red', lw=2}
+        segment_kwargs = {'s': 20, 'color': 'red', 'lw': 2}
     fig = plt.figure(figsize=figsize)
     for l in lines:
         m = l[0]
