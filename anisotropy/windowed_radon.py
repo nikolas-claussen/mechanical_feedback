@@ -41,6 +41,28 @@ from sklearn import cluster
 import matplotlib.pyplot as plt
 from matplotlib.colors import Normalize
 
+### Post-processing for tensors
+
+def filter_field(field, image_filter, kwargs={}):
+    """Apply a 2d image filter to all components of a vector or matrix field of shape (n_y, n_x, ...)"""
+    is_scalar = (len(field.shape) == 2)
+    is_vector = (len(field.shape) == 3)
+    is_tensor = (len(field.shape) == 4)
+
+    if is_scalar:
+        output = image_filter(field, **kwargs)
+    
+    if is_vector:
+        d1 = range(field.shape[-1])
+        output = np.stack([image_filter(field[...,i], **kwargs) for i in d1], axis=-1)
+
+    if is_tensor:
+        d1 = range(field.shape[-2])
+        d2 = range(field.shape[-1])
+        output = np.stack([np.stack([image_filter(field[...,i, j], **kwargs) for i in d1], axis=-1)
+                           for j in d2], axis=-1)
+    return output
+
 
 ### Process detected lines
 
