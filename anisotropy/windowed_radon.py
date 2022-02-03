@@ -105,7 +105,7 @@ def merge_lines(lines, distance_threshold=5):
     and reduces clutter. Returns a single array of shape (...,4) of lines.
     """
     if type(lines) is list:
-        lines = np.stack([np.hstack(x) for x in wr.flatten(lines, max_depth=2)])
+        lines = np.stack([np.hstack(x) for x in flatten(lines, max_depth=2)])
     clustering = cluster.AgglomerativeClustering(n_clusters=None, linkage='ward',
                                                  distance_threshold=distance_threshold).fit(lines[:,2:])
     labels = clustering.labels_
